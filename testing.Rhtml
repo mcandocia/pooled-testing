@@ -1,0 +1,237 @@
+<!--begin.rcode setup, echo=FALSE, message=FALSE, warning=FALSE, cache=TRUE
+
+library(polynom)
+library(tidyverse)
+
+#polynom::polynomial(coef=c(3,2,1))^2
+
+
+filter_solution <- function(x){
+  x = Re(x[!Im(x) != 0])
+  x = x[x < 1 & x > 0]
+  x
+}
+
+# calculate threshold for highest p for improvement
+prob_threshold = function(N){
+  
+  # p^N + (N + 1)* (1-p^N) = N
+  test_dist = polynomial(coef=c(rep(0,N), 1)) + (N+1) * (1-polynomial(coef=c(rep(0,N), 1))) - N
+  #print(test_dist)
+  1 - filter_solution(solve(test_dist))
+}
+
+# calculate EV
+calc_ev = function(N, p = NA){
+  
+  # p^N + (N + 1)* (1-p^N) = N
+  if (is.na(p)){
+    p = prob_threshold(N)
+  }
+  p = 1 - p
+  test_dist = polynomial(coef=c(rep(0,N), 1)) + (N+1) * (1-polynomial(coef=c(rep(0,N), 1)))
+  #print(test_dist)
+  sum(as.numeric(test_dist) * p^(0:N))
+}
+
+# JUST TESTING
+if (FALSE) {
+  prob_threshold(1)
+  
+  prob_threshold(2)
+  calc_ev(2,0.01)
+  
+  prob_threshold(3)
+  calc_ev(3, 1/15)
+  
+  prob_threshold(4)
+  calc_ev(4)
+  
+  prob_threshold(5)
+  calc_ev(5)
+  
+  calc_ev(100, p=0.0001)
+}
+
+n_frame = expand.grid(
+  N=2:105,
+  p = exp(seq(log(0.0001), log(0.8), 0.1))
+) %>%
+  rowwise() %>%
+  mutate(
+    EV = calc_ev(N, p),
+    tests_per_input = EV/N
+  ) %>%
+  left_join(
+    data.frame(
+      N=2:105
+    ) %>%
+      rowwise() %>%
+      mutate(breakeven_prob = prob_threshold(N))
+  ) %>%
+  group_by(p) %>%
+  mutate(
+    is_optimal = tests_per_input == min(tests_per_input) & any(tests_per_input < 1),
+    is_breakeven = abs(1 - p/breakeven_prob) <= 0.05,
+    grp = case_when(
+      is_optimal ~ 'optimal',
+      is_breakeven ~ 'breakeven',
+      TRUE ~ 'other'
+    ),
+    population_per_test=N/EV
+  ) %>%
+  ungroup()
+
+smart_percent <- function(x, n_digits=2){
+  sapply(
+    x * 100,
+    function(x) signif(x, digits=n_digits)
+  ) %>%
+    paste0('%')
+}
+
+end.rcode-->
+
+<p> In order to help curb COVID-19, <a href="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7451293/" target="_blank" id="nih_covid19_testing_out">mass testing is an important step</a> that should be implemented. It is far easier said, than done, however. Many sites and facilities are already reaching capacity, such as <a href="https://www.nwahomepage.com/news/covid-19-test-facilities-reach-capacity-as-testing-increases/" target="_blank" id="nwahomepage_covid19_facility_capacity_out">those around Fayetteville, AK</a>. </p>
+
+<p> While number of personnel is one limiting factor in certain locations, the <a href="https://slate.com/technology/2020/11/covid-tests-lines-shortage-supplies.html" target="_blank" id="slate_not_enough_tests_out">number of available tests is currently a significant problem</a>, with manufacturing limitations being a major bottleneck.</p>
+
+<h1> Pooled Testing </h1>
+
+<p> Pooled testing, the use of a single test to test multiple individuals at once, is an attractive option to overcome certain limitations with testing. <a href="https://www.prnewswire.com/news-releases/world-back-to-works-covid-19-rt-pcr-pooled-testing-option-helps-reduce-cost-and-provides-rapid-results-301177411.html" target="_blank" id="prnewswire_pooled_testing_option_out">World Back to Work recently announced</a>
+
+<p style="margin-left:48px"> <i>	&#8220;By using our Pooled Testing, we can now help employers, schools, and other large groups get rapid COVID testing with 95% sensitivity rates," says Rob Wright, Co-Founder & Chief Executive Officer for World Back to Work. "But an even bigger benefit is that we can provide this testing at a fraction of the price; employers don't have to sacrifice reliability for cost. Our Pooled Testing option can be as much as 75% less than traditional PCR testing, making it far more accessible. With 24-hour lab turnaround times, our Pooled Testing helps prevent continued spread that can occur with tests requiring longer processing times for results.&#8221;</i></p>
+</p>
+
+
+<div id="pooled_testing_img_div">
+  <img id="pooled_testing_img" src="figure/batch_testing.png" height="379px" width="720px" style="padding:2px"/>
+</div>
+
+<p> Pooled testing roughly works in this manner: </p>
+
+<ol id="pooled_testing_method">
+ <li> Collect samples from a large number of individuals and combine them. </li>
+ <li> Test the combined sample. If the result is negative, then all individuals are considered negative. </li>
+ <li> If it tests positive, then each individual must be tested again individually, so you end up having one extra test. </li>
+ 
+</ol>
+
+
+
+<h2> Theoretical Efficiency of Pooled Testing </h2>
+
+<p> The efficiency of pooled testing is limited by the percent of the population that is infected. If a large portion of the population is infected, pooled tests can only reliably include a few individuals per test. Theoretically, if only 0.01% of the population was infected, you could have 100 individuals sampled per test, save for practical limitations (e.g., is the sample too diluted?).</p>
+
+<!--begin.rcode test_heatmap, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=8
+
+print(
+  ggplot(n_frame) +
+  geom_tile(aes(x=N, y=p, fill=population_per_test), size=1) +
+  geom_line(data=n_frame %>% filter(is_optimal | is_breakeven) %>% arrange(desc(p)), aes(x=N, y=p, color=grp), size=2) +
+  scale_y_log10(labels=smart_percent, breaks=exp(seq(log(0.0001), log(0.85), log(10)/2))) + 
+  
+  scale_fill_gradientn(
+      'Avg. Individuals \nCovered per Test',
+      colors = cetcolor::cet_pal( 7,'cbd1'),
+      trans='log10'
+  ) + 
+  scale_color_manual(
+    'Threshold',
+    values = c(optimal='#000000', other='#00000000',breakeven='red')
+  ) +
+  coord_flip() + 
+  theme_bw() +
+  theme(axis.text.x=element_text(angle=30), plot.caption=element_text(size=rel(0.6))) +
+  labs(
+    title='Efficiency of Pooled Testing By Infection Rate and Size of Pool per Test (Theoretical)',
+    caption="source: https://maxcandocia.com/article/2020/Nov/26/math-behind-pooled-testing"
+  ) + 
+  ylab('Population Infection Rate') +
+  xlab('Individuals per Pool')
+)
+end.rcode-->
+
+<p> In the above graph, the brown sections have the highest efficiency, and the blue sections the lowest. The black line is the ideal number of individuals per pool for a given population infection rate, and the red line is the point at which individual tests are just as efficient as pooled testing for a given size. </p>
+
+<p>As you can see, around 32% there is no theoretical gain in testing, and for smaller infection rates, the efficiency of the tests increases quite a bit. An alternate way of looking at this is the efficiency of the tests over the population size: </p>
+
+<!--begin.rcode linear_efficiency_chart, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=8
+
+#pbreaks <- 10^(0:10)
+#pminor_breaks <- rep(1:9, 11)*(10^rep(0:10, each=9))
+
+print(
+  ggplot(n_frame %>% filter(is_optimal)) +
+  geom_line(aes(x=p, y=population_per_test, color=N, group=1), size=3) + 
+    #scale_y_log10(breaks=pbreaks,
+    #              minor_breaks=pminor_breaks
+    #              ) +
+  scale_color_gradientn('Testing Pool Size', colors=cetcolor::cet_pal(7, 'i1')) + 
+  scale_x_log10(labels=smart_percent, breaks=exp(seq(log(0.0001), log(0.85), log(10)/2))) + 
+  theme_bw() +
+    #annotation_logticks(sides='lr') + 
+  labs(
+    title='Number of Individuals Covered by Pooled Test vs. \nPopulation Infection Rate (Theoretically Optimal)',
+    caption="source: https://maxcandocia.com/article/2020/Nov/26/math-behind-pooled-testing"
+  ) + 
+  xlab('Population Infection Rate') +
+  ylab('Average Individuals Tested per Test') +
+    expand_limits(y=1)
+  
+)
+end.rcode-->
+
+<p> With an infection rate of 0.01%, it only takes one test to test 50 individuals on average, with a pool size of about 100, but for 0.1%, that number goes down to 15, for 1%, 5, and at 10% it is about 2. </p>
+
+<div id="sample_size_100_note_div" style="margin:4px;padding:8px; background-color:#DFE"> <i><a href="https://www.nature.com/articles/d41586-020-02053-6#:~:text=Leon%20Mutesa" target="_blank" id="nature_math_strategy_covid_testing_BLOCK_out">Leon Mutesa, a geneticist at the University of Rwanda in Kigali, and another co-author who is part of the government task force, says that he has been able to identify one positive sample in a pool of 100 in the lab.</a></i></div>
+
+ <div id="sample_size_30_note_div" style="margin:4px;padding:8px; background-color:#FED"><i><a href="https://www.nature.com/articles/d41586-020-02053-6#:~text=Sigrun%20Smola" target="_blank" id="nature_math_strategy_covid_testing_BLOCK_out">Sigrun Smola, a molecular virologist at Saarland University Medical Center in Homburg, Germany, who has been testing samples in groups of up to 20, doesn’t recommend grouping more than 30 samples in one test, to ensure sufficient accuracy. Larger groups will make it harder to detect the virus, and increase the chances of missing positives, she says.</a></i></div>
+
+
+<h1> Additional Testing Methods </h1>
+
+<p>  <li> Mallapaty, Smriti. The mathematical strategy that could transform Covid testing. 2020-07-10. nature.com. <a href="https://www.nature.com/articles/d41586-020-02053-6" target="_blank" id="nature_math_strategy_covid_testing_out">There are different methods that sampling can be done</a></li> . The above was the simplest way, which only requires 2 rounds of testing at most, and was used earlier this year in China. For the purposes of public health, an ideal pooling schema should be limited to as few rounds as possible to increase the speed at which results are returned.</p>
+
+<p> These methods are generally more complicated, and from what I gathered, have drawbacks when multiple samples per pool are positive. They do increase efficiency, either through fewer tests, fewer rounds, or an efficiency increase. One other drawback of many of these is that they require a minimum number of samples to be taken for the scheme to work most efficiently.</p>
+
+<h1> Conclusions </h1>
+
+<p> Pooled testing can be a great way to boost efficiency of mass testing, but it is severely limited by the rate of infection for a given population. For populations with low infection rates, it is a good option if available, but for populations with high infection rates, it is not a viable option. </p>
+
+<h2> Caveats </h2>
+
+<p> The above figures were made with the assumption that a pooled sample would have the same false negative rate as an individual sample, and that the specific testing method would only do one round of pooled testing, as opposed to successive rounds (e.g., splitting a population of 100 into two samples of 50 if a positive is found). In theory, successive sampling would increase efficiency, but because testing is time-sensitive, I made the assumption that only one round of pooled testing is used, and that all individuals would be tested if the pool came back positive.</p>
+
+<p> Additionally, if individuals in a pool are from a similar geographic region, (e.g., a neighborhood), then this method becomes more efficient, since more than one positive is likely to be detected, due to the localized nature of infection outbreaks.</p>
+
+<p> I am not a medical professional/researcher. My expertise is in statistics and data science, so there may be additional considerations and limitations I am not aware of. If you have any feedback, please email me at <code>[myfirstname][mylastname]@[gmail dot com]</code>. </p>
+
+<h1> Notes on Math Behind Graph </h1>
+
+<p> The statistics in the graph are the expected value of the number of tests needed for a given population, given an infection rate and a number of individual samples per pool.</p>
+
+
+<h1> Citations </h1>
+
+<ol id="citation_list">
+
+ 
+  
+  <li id="source1"> Mak, Aron. Why There are Suddenly not Enough Covid Tests. The Slate Group. 2020-11-24. <a href="https://slate.com/technology/2020/11/covid-tests-lines-shortage-supplies.html" target="_blank" id="slate_not_enough_tests_SOURCES_out">https://www.msn.com/en-us/health/medical/why-there-are-suddenly-not-enough-covid-tests/ar-BB1bjZmf</a> </li>
+  
+  <li id="source2"> Mallapaty, Smriti. The mathematical strategy that could transform Covid testing. 2020-07-10. nature.com. <a href="https://www.nature.com/articles/d41586-020-02053-6" target="_blank" id="nature_math_strategy_covid_testing_SOURCE_out">https://www.nature.com/articles/d41586-020-02053-6</a></li>
+  
+   <li id="source3">
+    Pooled Sample Testing and Screening Testing for COVID-19. Food and Drug Administration. <a href="https://www.fda.gov/medical-devices/coronavirus-covid-19-and-medical-devices/pooled-sample-testing-and-screening-testing-covid-19#:~:text=Pooling%20samples%20involves%20mixing%20several,if%20not%20properly%20validated." target="_blank" id="fda_gov_pooling_method_out">https://www.fda.gov/medical-devices/coronavirus-covid-19-and-medical-devices/pooled-sample-testing-and-screening-testing-covid-19</a>
+  </li>
+  
+  <li id="source4"> Wilson, Megan. COVID-19 test facilities reach capacity as testing increases. Nextar, Inc. 2020-11-18. <a href="https://www.nwahomepage.com/news/covid-19-test-facilities-reach-capacity-as-testing-increases/" target="_blank" id="nwahomepage_covid19_facility_capacity_SOURCE_out">https://www.nwahomepage.com/news/covid-19-test-facilities-reach-capacity-as-testing-increases/</a> </li>
+  
+  <li id="source5"> World Back to Work. World Back to Work's COVID 19 RT-PCR POOLED TESTING Option Helps Reduce Cost and Provides Rapid Results. 2020-11-19. <a href="https://www.prnewswire.com/news-releases/world-back-to-works-covid-19-rt-pcr-pooled-testing-option-helps-reduce-cost-and-provides-rapid-results-301177411.html" target="_blank" id="prnewswire_pooled_testing_option_SOURCE_out">https://www.prnewswire.com/news-releases/world-back-to-works-covid-19-rt-pcr-pooled-testing-option-helps-reduce-cost-and-provides-rapid-results-301177411.html</a> </li>
+</ol>
+
+<h1> Source Code </h1>
+
+<p> You can find the source code for this article on <a href="https://github.com/mcandocia/pooled-testing-math" id="git_pooled_testing_math_out" target="_blank">https://github.com/mcandocia/pooled-testing-math</a>. </p>
+
